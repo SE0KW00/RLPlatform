@@ -1,0 +1,22 @@
+[project]
+name = "nlprl"
+version = "0.1.0"
+description = "NLP 강화학습(REINFORCE, PPO-RLHF, DPO, GRPO)을 바닥부터 공부하는 플랫폼"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.1"]
+
+[project.optional-dependencies]
+dev = ["matplotlib>=3.7", "pytest>=7"]
+
+[project.scripts]
+nlprl = "nlprl.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["nlprl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
