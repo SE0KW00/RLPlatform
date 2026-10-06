@@ -4,12 +4,12 @@
 
 | RL 용어 | LLM 에서의 의미 | 이 코드에서 |
 |---|---|---|
-| 상태 s_t | 프롬프트 + 지금까지 생성한 토큰들 | `input_ids[:, :t+1]` |
-| 행동 a_t | 다음 토큰 하나 (어휘 크기만큼의 이산 행동) | `input_ids[:, t+1]` |
-| 정책 π_θ(a_t∣s_t) | 언어 모델의 다음 토큰 분포 | `TinyGPT` 의 `logits` → softmax |
-| 전이 P(s_{t+1}∣s_t,a_t) | **결정적**: 상태 뒤에 토큰을 이어 붙임 | `torch.cat([ids, nxt])` |
+| 상태 $s_t$ | 프롬프트 + 지금까지 생성한 토큰들 | `input_ids[:, :t+1]` |
+| 행동 $a_t$ | 다음 토큰 하나 (어휘 크기만큼의 이산 행동) | `input_ids[:, t+1]` |
+| 정책 $\pi_\theta(a_t \mid s_t)$ | 언어 모델의 다음 토큰 분포 | `TinyGPT` 의 `logits` → softmax |
+| 전이 $P(s_{t+1} \mid s_t, a_t)$ | **결정적**: 상태 뒤에 토큰을 이어 붙임 | `torch.cat([ids, nxt])` |
 | 에피소드 | 프롬프트 하나에 대한 응답 하나 (EOS 까지) | `generate()` 한 번 |
-| 보상 R | 보통 **응답이 끝난 뒤 한 번만** 주어짐 | `task.reward(prompt, response)` |
+| 보상 $R(x, y)$ | 보통 **응답이 끝난 뒤 한 번만** 주어짐 | `task.reward(prompt, response)` |
 
 LLM RL 의 특이점:
 
@@ -22,12 +22,33 @@ LLM RL 의 특이점:
 
 ## 2. 목적 함수
 
+RL 단계에서 크게 만들고 싶은 값은 다음 한 줄입니다.
+
 $$
-J(\theta) = \mathbb{E}_{x\sim D,\; y\sim\pi_\theta(\cdot|x)}\big[R(x,y)\big] \;-\; \beta\,\mathrm{KL}\big(\pi_\theta(\cdot|x)\,\|\,\pi_{\text{ref}}(\cdot|x)\big)
+J(\theta) = \mathbb{E}_{x \sim \mathcal{D}} \, \mathbb{E}_{y \sim \pi_\theta(\cdot \mid x)} \big[ R(x, y) \big] \;-\; \beta \, \mathrm{KL}\big( \pi_\theta \,\|\, \pi_{\mathrm{ref}} \big)
 $$
 
-- `x` 프롬프트, `y` 응답, `π_ref` 는 RL 시작 시점(SFT) 모델을 얼린 것 (`make_reference()`).
-- 시퀀스 확률은 토큰 확률의 곱: `log π(y|x) = Σ_t log π(y_t | x, y_<t)` → `token_logprobs()` 결과를 응답 마스크로 합산.
+> **읽는 법** — 데이터에서 프롬프트 $x$ 를 뽑고, 정책 $\pi_\theta$ 로 응답 $y$ 를 생성했을 때 받는 보상 $R$ 의 **평균을 크게** 만들되, 처음 정책 $\pi_{\mathrm{ref}}$ 와 달라진 정도(KL)에는 $\beta$ 만큼 **벌점**을 준다.
+
+| 기호 | 뜻 | 코드 |
+|---|---|---|
+| $\theta$ | 정책(언어 모델)의 파라미터 | `policy.parameters()` |
+| $x \sim \mathcal{D}$ | 데이터 분포 $\mathcal{D}$ 에서 뽑은 프롬프트 | `task.sample_prompts()` |
+| $y \sim \pi_\theta(\cdot \mid x)$ | $x$ 가 주어졌을 때 정책으로 샘플링한 응답 | `generate()` |
+| $R(x, y)$ | 응답 전체에 대한 보상 (숫자 하나) | `task.reward()` |
+| $\pi_{\mathrm{ref}}$ | RL 시작 시점(SFT) 정책을 얼려 둔 것 | `make_reference()` |
+| $\beta$ | KL 벌점의 세기 | `kl_coef` |
+| $\mathbb{E}[\,\cdot\,]$ | 기댓값 — 실제로는 **배치 평균**으로 근사 | `.mean()` |
+
+### 응답의 확률 = 토큰 확률의 곱
+
+응답 $y = (y_1, y_2, \dots, y_T)$ 의 확률은 각 토큰이 "앞의 모든 토큰이 주어졌을 때" 나올 확률을 곱한 것이고, 로그를 취하면 **합**이 됩니다.
+
+$$
+\log \pi_\theta(y \mid x) = \sum_{t=1}^{T} \log \pi_\theta\big( y_t \mid x, y_{<t} \big)
+$$
+
+여기서 $y_{<t}$ 는 "$t$ 번째보다 앞에 생성된 토큰들"입니다. 코드에서는 `token_logprobs()` 의 결과에 응답 마스크를 곱해 더합니다: `(logp * action_mask).sum(-1)`.
 
 ## 3. 텐서 레이아웃 (가장 많이 헷갈리는 부분)
 

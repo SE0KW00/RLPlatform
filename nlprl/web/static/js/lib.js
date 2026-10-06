@@ -1,6 +1,8 @@
 // 공통 유틸: DOM 헬퍼, API, 마크다운 렌더러, 수식 포맷터, 파이썬 문법 강조.
 // 외부 라이브러리 없이 동작하도록 직접 구현했다 (오프라인 환경에서도 사용 가능).
 
+import { texToMathML } from "./math.js";
+
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -49,88 +51,13 @@ export function loading(text = "계산 중…") {
 }
 
 // ---------------------------------------------------------------------------
-// 수식: LaTeX 일부를 유니코드 + <sub>/<sup> 로 변환 (학습 문서에 쓰이는 범위만)
-// ---------------------------------------------------------------------------
-const SYMBOLS = {
-  theta: "θ", pi: "π", beta: "β", sigma: "σ", lambda: "λ", gamma: "γ", delta: "δ", epsilon: "ε", rho: "ρ",
-  phi: "φ", mu: "μ", alpha: "α", nabla: "∇", sum: "Σ", infty: "∞", cdot: "·", sim: "∼", ge: "≥", le: "≤",
-  geq: "≥", leq: "≤", mid: "∣", succ: "≻", Leftrightarrow: "⇔", Rightarrow: "⇒", to: "→", approx: "≈",
-  times: "×", propto: "∝", "|": "‖", log: "log", exp: "exp", min: "min", max: "max", quad: " ",
-  qquad: "  ", ",": " ", ";": " ", "!": "", " ": " ",
-};
-
-function readGroup(s, i) {
-  // s[i] === "{" 인 위치에서 짝이 맞는 "}" 까지 읽는다
-  let depth = 0;
-  for (let j = i; j < s.length; j++) {
-    if (s[j] === "{") depth++;
-    else if (s[j] === "}" && --depth === 0) return [s.slice(i + 1, j), j + 1];
-  }
-  return [s.slice(i + 1), s.length];
-}
-
-function readArg(s, i) {
-  while (s[i] === " ") i++;
-  if (s[i] === "{") return readGroup(s, i);
-  if (s[i] === "\\") {
-    const m = /^\\([a-zA-Z]+|.)/.exec(s.slice(i));
-    return [m[0], i + m[0].length];
-  }
-  return [s[i] || "", i + 1];
-}
-
-export function texToHtml(s) {
-  let out = "";
-  let i = 0;
-  while (i < s.length) {
-    const c = s[i];
-    if (c === "\\") {
-      const m = /^\\([a-zA-Z]+|.)/.exec(s.slice(i));
-      const name = m[1];
-      i += m[0].length;
-      if (name === "frac" || name === "tfrac" || name === "dfrac") {
-        const [a, j] = readArg(s, i);
-        const [b, k] = readArg(s, j);
-        i = k;
-        out += `<span class="frac"><span>${texToHtml(a)}</span><span>${texToHtml(b)}</span></span>`;
-      } else if (["mathrm", "text", "operatorname", "mathbf", "textbf"].includes(name)) {
-        const [a, j] = readArg(s, i);
-        i = j;
-        out += texToHtml(a);
-      } else if (name === "mathbb") {
-        const [a, j] = readArg(s, i);
-        i = j;
-        out += { E: "𝔼", R: "ℝ", P: "ℙ" }[a] || a;
-      } else if (/^(big|Big|bigg|Bigg|left|right)$/.test(name)) {
-        // 크기 조절 명령은 무시
-      } else if (name in SYMBOLS) {
-        out += SYMBOLS[name];
-      } else {
-        out += esc(name);
-      }
-    } else if (c === "_" || c === "^") {
-      const [a, j] = readArg(s, i + 1);
-      i = j;
-      const tag = c === "_" ? "sub" : "sup";
-      out += `<${tag}>${texToHtml(a)}</${tag}>`;
-    } else if (c === "{" || c === "}") {
-      i++;
-    } else {
-      out += esc(c);
-      i++;
-    }
-  }
-  return out;
-}
-
-// ---------------------------------------------------------------------------
 // 마크다운 (문서에 쓰이는 문법: 제목, 문단, 목록, 표, 코드 블록, 인용, $$수식$$, 인라인 서식)
 // ---------------------------------------------------------------------------
 export function inlineMd(text, linkFn = (u) => u) {
   const codes = [];
   let s = text.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(`<code>${esc(c)}</code>`) - 1}\u0000`);
   const maths = [];
-  s = s.replace(/\$\$([^$]+)\$\$|\$([^$\n]+)\$/g, (_, a, b) => `\u0001${maths.push(`<span class="math">${texToHtml(a || b)}</span>`) - 1}\u0001`);
+  s = s.replace(/\$\$([^$]+)\$\$|\$([^$\n]+)\$/g, (_, a, b) => `\u0001${maths.push(texToMathML(a || b, false)) - 1}\u0001`);
   s = esc(s)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
@@ -168,7 +95,7 @@ export function renderMarkdown(md, linkFn) {
         tex = buf.join(" ");
       }
       i++;
-      out.push(`<div class="math display">${texToHtml(tex)}</div>`);
+      out.push(`<div class="math-block">${texToMathML(tex, true)}</div>`);
     } else if (/^#{1,6} /.test(line)) {
       const n = line.match(/^#+/)[0].length;
       out.push(`<h${n}>${inl(line.slice(n + 1))}</h${n}>`);

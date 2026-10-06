@@ -9,7 +9,14 @@ DeepSeek-R1, OpenAI o1 계열 추론 모델의 핵심 학습 방식입니다. �
 
 ## 2. GRPO: critic 없는 PPO
 
-PPO 의 critic 은 정책만큼 큰 모델이라 비쌉니다. GRPO 는 **같은 프롬프트에서 G 개를 샘플링해 그룹 안에서 비교**합니다.
+PPO 의 critic 은 정책만큼 큰 모델이라 비쌉니다. GRPO 는 **같은 프롬프트에서 $G$ 개를 샘플링해 그룹 안에서 비교**합니다.
+프롬프트 $x$ 에서 응답 $y_1, \dots, y_G$ 를 뽑고 각각 보상 $R_1, \dots, R_G$ 를 받았다면, 응답 $i$ 의 advantage 는
+
+$$
+A_i = \frac{R_i - \operatorname{mean}(R_1, \dots, R_G)}{\operatorname{std}(R_1, \dots, R_G) + \varepsilon}
+$$
+
+> **읽는 법** — "같은 문제를 푼 동료들보다 얼마나 잘했나"를 표준편차 단위로 잰 점수. 그룹 평균보다 잘하면 양수, 못하면 음수.
 
 ```python
 def group_advantages(rewards, G):
@@ -18,12 +25,35 @@ def group_advantages(rewards, G):
 ```
 
 - 그룹 평균이 baseline 역할을 합니다 (02장 REINFORCE 의 `batch_mean` 을 프롬프트별로 한 것).
-- 응답의 모든 토큰이 같은 advantage 를 받습니다 (토큰별 credit assignment 는 포기).
-- KL 은 보상이 아니라 **손실에 직접** k3 추정치로 더합니다: `exp(ref−logp) − (ref−logp) − 1 ≥ 0`.
+- 응답의 모든 토큰이 같은 advantage $A_i$ 를 받습니다 (토큰별 credit assignment 는 포기).
+
+### 손실
+
+PPO 의 clip 목적을 그대로 쓰고, KL 은 보상이 아니라 **손실에 직접** 더합니다. $\rho_{i,t}$ 는 응답 $i$ 의 $t$ 번째 토큰에서의 확률 비율(03장)입니다.
+
+$$
+\mathcal{L}_{\mathrm{GRPO}}(\theta) = -\frac{1}{G} \sum_{i=1}^{G} \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \Big[ \min\big( \rho_{i,t} A_i,\; \mathrm{clip}(\rho_{i,t},\, 1-\epsilon,\, 1+\epsilon) \, A_i \big) \;-\; \beta \, D_{i,t} \Big]
+$$
+
+KL 항 $D_{i,t}$ 는 항상 0 이상이고 분산이 작은 **k3 추정치**를 씁니다. $u = \log \pi_{\mathrm{ref}}(y_{i,t} \mid s_{i,t}) - \log \pi_\theta(y_{i,t} \mid s_{i,t})$ 라 두면
+
+$$
+D_{i,t} = e^{u} - u - 1 \;\ge\; 0
+$$
+
+($e^u \ge 1 + u$ 이므로 항상 0 이상, 두 정책이 같으면 $u = 0$ 이라 정확히 0.)
+
+| 수식 | 코드 (`grpo.py`) |
+|---|---|
+| $A_i$ | `adv = group_advantages(score, G, scale_rewards)` |
+| $\rho_{i,t}$ | `ratio = torch.exp(logp - old_logp)` |
+| $u$ | `log_r = ref_logp - logp` |
+| $D_{i,t}$ | `kl = torch.exp(log_r) - log_r - 1` |
+| $\frac{1}{\lvert y_i \rvert} \sum_t$, $\frac{1}{G} \sum_i$ | `masked_mean(per_token, amask, dim=1).mean()` |
 
 ### 학습 신호가 사라지는 경우
 
-그룹의 G 개 응답이 **모두 맞거나 모두 틀리면** std=0 → advantage=0 → 그 프롬프트에서는 아무것도 배우지 않습니다.
+그룹의 $G$ 개 응답이 **모두 맞거나 모두 틀리면** 분자가 0 → $A_i = 0$ → 그 프롬프트에서는 아무것도 배우지 않습니다.
 로그의 `zero_adv_groups` 가 이 비율입니다. 너무 쉬운/어려운 문제가 많으면 학습이 멈추는 이유이며,
 DAPO 의 "dynamic sampling"(이런 그룹을 버리고 다시 뽑기)이 이를 해결하려는 기법입니다.
 

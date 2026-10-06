@@ -90,6 +90,7 @@ python -m nlprl plot runs/sentiment/*/history.json --metric eval/positive_rate -
 | 05 | [DPO](docs/05_dpo.md) | `algorithms/dpo.py` |
 | 06 | [GRPO 와 RLVR](docs/06_grpo_rlvr.md) | `algorithms/grpo.py` |
 | 07 | [더 나아가기](docs/07_next_steps.md) | |
+| 부록 | [기호와 수식 읽는 법](docs/appendix_notation.md) | |
 
 ## 프로젝트 구조
 

@@ -5,12 +5,29 @@
 ## 1. 왜 보상 모델이 필요한가
 
 "좋은 답변"은 규칙으로 쓸 수 없습니다. 대신 사람에게 **두 응답 중 어느 쪽이 나은지** 고르게 하면 훨씬 일관된 라벨을 얻을 수 있습니다.
-이 비교 데이터로 스칼라 점수를 내는 모델을 학습합니다 (Bradley–Terry 모델):
+이 비교 데이터로 응답에 점수(숫자 하나)를 매기는 모델 $r_\phi$ 를 학습합니다. 이때 쓰는 확률 모형이 **Bradley–Terry 모델**입니다.
 
 $$
-P(y_w \succ y_l \mid x) = \sigma\big(r_\phi(x, y_w) - r_\phi(x, y_l)\big),\qquad
-\mathcal{L}_{RM} = -\log\sigma\big(r_\phi(x,y_w) - r_\phi(x,y_l)\big)
+P(y_w \succ y_l \mid x) = \sigma\big( r_\phi(x, y_w) - r_\phi(x, y_l) \big), \qquad \sigma(z) = \frac{1}{1 + e^{-z}}
 $$
+
+> **읽는 법** — 프롬프트 $x$ 에 대해 $y_w$ 가 $y_l$ 보다 낫다고 판단될 확률은, 두 응답의 **점수 차이**를 시그모이드에 넣은 값이다. 점수 차이가 0 이면 반반(0.5), 클수록 1 에 가깝다.
+
+보상 모델은 이 확률이 실제 라벨과 맞도록, 즉 **선택된 응답의 점수가 더 높아지도록** 학습합니다.
+
+$$
+\mathcal{L}_{\mathrm{RM}}(\phi) = -\,\mathbb{E}_{(x,\, y_w,\, y_l)} \Big[ \log \sigma\big( r_\phi(x, y_w) - r_\phi(x, y_l) \big) \Big]
+$$
+
+| 기호 | 뜻 | 코드 |
+|---|---|---|
+| $y_w$ (winner) | 선택된 응답 (chosen) | `PreferencePair.chosen` |
+| $y_l$ (loser) | 거절된 응답 (rejected) | `PreferencePair.rejected` |
+| $y_w \succ y_l$ | "$y_w$ 가 $y_l$ 보다 낫다" | — |
+| $r_\phi(x, y)$ | 보상 모델의 점수, $\phi$ 는 그 파라미터 | `rm(ids, mask)` |
+| $\sigma$ | 시그모이드 함수 | `F.logsigmoid` |
+
+점수의 **차이**만 학습되므로, 모든 점수에 같은 상수를 더해도 손실은 같습니다 — 보상 모델 점수의 절대값 자체에는 의미가 없습니다.
 
 이 플랫폼에서는 SFT 모델로 프롬프트당 4개 응답을 샘플링하고, 규칙 보상으로 최고/최저를 골라 "사람 라벨"을 대신합니다
 (`make_preference_pairs()`). `--label-noise 0.2` 로 라벨러의 실수를 흉내낼 수 있습니다.

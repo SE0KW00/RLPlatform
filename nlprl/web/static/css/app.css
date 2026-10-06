@@ -274,11 +274,12 @@ td.up { color: var(--accent-text); } td.down { color: var(--danger); }
 .prose blockquote { margin: 1em 0; padding: 8px 16px; border-left: 4px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0; color: var(--text-2); }
 .code-block { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; overflow-x: auto; font-size: .84rem; line-height: 1.55; }
 .code-block code { background: none; border: 0; padding: 0; font-size: inherit; }
-.math { font-family: "Cambria Math", "STIX Two Math", "Latin Modern Math", Georgia, serif; font-style: normal; white-space: nowrap; }
-.math.display { display: block; text-align: center; margin: 1em 0; padding: 12px; background: var(--surface-2); border-radius: 10px; font-size: 1.12rem; overflow-x: auto; }
-.math sub, .math sup { font-size: .7em; }
-.frac { display: inline-flex; flex-direction: column; vertical-align: middle; text-align: center; font-size: .9em; margin: 0 .15em; }
-.frac > span:first-child { border-bottom: 1px solid currentColor; padding: 0 .2em; }
+/* 수식 (MathML) */
+math { font-family: "STIX Two Math", "Cambria Math", "Latin Modern Math", "Noto Sans Math", math; font-size: 1.08em; color: var(--text); }
+.math-block { margin: 1.1em 0; padding: 14px 18px; background: var(--surface-2); border-radius: 10px; overflow-x: auto; overflow-y: hidden; }
+.math-block math { font-size: 1.22em; margin: 0 auto; }
+.prose table math, .step-explain math { font-size: 1em; }
+.prose blockquote { line-height: 1.8; }
 
 /* 코드 워크스루 */
 .walkthrough { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 18px; align-items: start; }

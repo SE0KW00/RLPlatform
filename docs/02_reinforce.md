@@ -4,41 +4,70 @@
 
 ## 1. 핵심 아이디어
 
-보상 함수 R 은 "문자열 → 숫자" 라서 미분할 수 없습니다. 그래도 **기대 보상의 기울기**는 구할 수 있습니다 (log-derivative trick):
+보상 함수 $R$ 은 문자열을 받아 숫자를 돌려줄 뿐이라 미분할 수 없습니다. 그래도 **기대 보상의 기울기**는 구할 수 있습니다.
 
 $$
-\nabla_\theta\,\mathbb{E}_{y\sim\pi_\theta}[R(y)] = \mathbb{E}_{y\sim\pi_\theta}\big[R(y)\,\nabla_\theta \log\pi_\theta(y)\big]
+\nabla_\theta \, \mathbb{E}_{y \sim \pi_\theta} \big[ R(y) \big] = \mathbb{E}_{y \sim \pi_\theta} \big[ R(y) \, \nabla_\theta \log \pi_\theta(y) \big]
 $$
 
-해석: **보상이 높았던 응답의 확률은 올리고, 낮았던 응답의 확률은 내린다.**
-이는 "보상으로 가중한 최대우도 학습"과 같습니다. 코드로는 한 줄입니다.
+> **읽는 법** — 기대 보상을 키우는 방향은, 샘플한 응답의 log 확률을 키우는 방향 $\nabla_\theta \log \pi_\theta(y)$ 에 **그 응답의 보상 $R(y)$ 를 가중치로 곱해 평균** 낸 것이다.
 
-```python
-loss = -(advantage * seq_logp).mean()     # seq_logp = Σ_t log π_θ(y_t | x, y_<t)
-```
+**왜 성립하나? (세 단계)**
+
+1. 기댓값을 합으로 풀어 쓰면, $R$ 은 $\theta$ 와 무관하므로 미분 밖으로 나옵니다: $\nabla_\theta \sum_y \pi_\theta(y) R(y) = \sum_y R(y) \, \nabla_\theta \pi_\theta(y)$
+2. log 의 미분 $\nabla \log \pi = \frac{\nabla \pi}{\pi}$ 를 뒤집으면 $\nabla_\theta \pi_\theta(y) = \pi_\theta(y) \, \nabla_\theta \log \pi_\theta(y)$ 입니다.
+3. 대입하면 $\sum_y \pi_\theta(y) \, R(y) \, \nabla_\theta \log \pi_\theta(y)$ — 다시 $\pi_\theta$ 에 대한 기댓값이 되므로 **샘플 평균으로 근사**할 수 있습니다.
+
+결론: **보상이 높았던 응답의 확률은 올리고, 낮았던 응답의 확률은 내린다.** "보상으로 가중한 최대우도 학습"과 같습니다.
+
+| 수식 | 코드 (`reinforce.py`) |
+|---|---|
+| $\log \pi_\theta(y \mid x) = \sum_t \log \pi_\theta(y_t \mid s_t)$ | `seq_logp = (logp * amask).sum(-1)` |
+| $A = R - b$ (advantage, 아래 2절) | `adv = total_reward - b` |
+| $-\frac{1}{B} \sum_{i=1}^{B} A_i \log \pi_\theta(y_i \mid x_i)$ | `loss = -(adv * seq_logp).mean()` |
+
+손실에 마이너스가 붙는 이유: 옵티마이저는 손실을 **줄이는** 방향으로 움직이므로, 키우고 싶은 값에 −1 을 곱합니다.
 
 ## 2. Baseline 으로 분산 줄이기
 
-보상이 모두 양수라면 모든 응답의 확률을 올리게 되고, 신호는 "얼마나 더" 올리느냐의 차이뿐입니다 → 분산이 큼.
-상수 b 를 빼도 기댓값은 그대로입니다 ( `E[∇ log π] = 0` 이므로). 그래서
+보상이 모두 양수라면 모든 응답의 확률을 올리게 되고, 신호는 "얼마나 더" 올리느냐의 차이뿐입니다 → 기울기의 분산이 큽니다. 그래서 보상에서 기준값 $b$ 를 뺀 **advantage** 를 씁니다.
 
-$$ A = R - b $$
+$$
+A = R - b
+$$
 
-를 advantage 로 씁니다. 이 코드는 세 가지 baseline 을 제공합니다 (`--baseline`):
+상수 $b$ 를 빼도 기울기의 **기댓값은 변하지 않습니다**. 확률의 합은 항상 1 이라 그 미분이 0 이기 때문입니다.
 
-- `none` : b = 0
+$$
+\mathbb{E}_{y \sim \pi_\theta} \big[ \nabla_\theta \log \pi_\theta(y) \big] = \sum_y \nabla_\theta \pi_\theta(y) = \nabla_\theta \sum_y \pi_\theta(y) = \nabla_\theta \, 1 = 0
+$$
+
+따라서 $\mathbb{E}\big[(R - b) \nabla_\theta \log \pi_\theta\big] = \mathbb{E}\big[R \, \nabla_\theta \log \pi_\theta\big] - b \cdot 0$ 입니다. 평균은 그대로, 흔들림만 줄어듭니다.
+
+이 코드는 세 가지 baseline 을 제공합니다 (`--baseline`):
+
+- `none` : $b = 0$
 - `batch_mean` : 같은 배치의 평균 보상 (기본값; RLOO·GRPO 의 원형)
 - `ema` : 지수이동평균
 
 ## 3. KL 벌점
 
-```python
-kl = ((logp - ref_logp) * amask).sum(-1)   # log π_θ(y|x) - log π_ref(y|x), 샘플 기반 KL 추정치
-total_reward = score - kl_coef * kl
-```
+참조 정책과의 거리는 **샘플한 응답 위에서** 두 정책의 log 확률 차이를 더해 추정합니다.
 
-y 가 π_θ 에서 샘플링되었으므로 `log π_θ(y) − log π_ref(y)` 의 기댓값이 정확히 KL(π_θ‖π_ref) 입니다.
-KL 을 보상의 일부로 다루는 것이 InstructGPT 이후의 표준입니다.
+$$
+\widehat{\mathrm{KL}}(x, y) = \sum_{t} \Big( \log \pi_\theta(y_t \mid s_t) - \log \pi_{\mathrm{ref}}(y_t \mid s_t) \Big)
+$$
+
+$y$ 가 $\pi_\theta$ 에서 샘플링되었으므로 이 값의 기댓값이 정확히 $\mathrm{KL}(\pi_\theta \,\|\, \pi_{\mathrm{ref}})$ 입니다. 그리고 KL 을 **보상의 일부**로 다룹니다 (InstructGPT 이후의 표준).
+
+$$
+R'(x, y) = R(x, y) - \beta \, \widehat{\mathrm{KL}}(x, y)
+$$
+
+```python
+kl = ((logp - ref_logp) * amask).sum(-1)   # KL 추정치
+total_reward = score - kl_coef * kl        # R' = R − β·KL
+```
 
 ## 실습
 

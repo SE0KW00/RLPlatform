@@ -2,26 +2,77 @@
 
 코드: [`nlprl/algorithms/dpo.py`](../nlprl/algorithms/dpo.py)
 
-## 1. 유도 (세 줄 요약)
+## 1. 유도 — 네 단계
 
-1. KL 제약 보상 최대화 `max E[r] − β·KL(π‖π_ref)` 의 최적해는 닫힌 형태로 쓸 수 있다:
-   $$\pi^*(y|x) = \frac{1}{Z(x)}\,\pi_{\text{ref}}(y|x)\,\exp\!\big(r(x,y)/\beta\big)$$
-2. 이를 r 에 대해 풀면: $r(x,y) = \beta\log\frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta\log Z(x)$
-3. Bradley–Terry 식에 넣으면 **Z(x) 가 소거**된다:
-   $$\mathcal{L}_{DPO} = -\log\sigma\Big(\beta\Big[\log\tfrac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log\tfrac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)}\Big]\Big)$$
+RLHF 는 "보상 모델 학습 → PPO" 두 단계였습니다. DPO 는 수식 변형으로 이 둘을 **한 번의 지도학습**으로 합칩니다.
 
-즉 **언어 모델 자체가 암묵적 보상 모델**이 됩니다 ("Your Language Model is Secretly a Reward Model").
+**① 풀고 싶은 문제** — RLHF 와 같은 목표: 보상은 크게, 참조 정책과의 거리는 작게.
+
+$$
+\max_{\pi} \; \mathbb{E}_{x \sim \mathcal{D},\; y \sim \pi(\cdot \mid x)} \big[ r(x, y) \big] \;-\; \beta \, \mathrm{KL}\big( \pi(\cdot \mid x) \,\|\, \pi_{\mathrm{ref}}(\cdot \mid x) \big)
+$$
+
+**② 최적해는 닫힌 형태로 쓸 수 있다.**
+
+$$
+\pi^{*}(y \mid x) = \frac{1}{Z(x)} \, \pi_{\mathrm{ref}}(y \mid x) \, \exp\!\Big( \frac{r(x, y)}{\beta} \Big)
+$$
+
+> **읽는 법** — 최적 정책은 참조 정책을 보상이 높은 쪽으로 $\exp(r/\beta)$ 배만큼 **기울인** 분포다. $\beta$ 가 작을수록 더 많이 기울어진다. $Z(x) = \sum_y \pi_{\mathrm{ref}}(y \mid x) \exp(r(x, y)/\beta)$ 는 확률의 합을 1 로 맞추는 정규화 상수인데, 가능한 모든 문장 $y$ 에 대한 합이라 **직접 계산할 수 없다.**
+
+**③ 이 식을 보상 $r$ 에 대해 정리한다.** (양변에 log 를 취하고 이항)
+
+$$
+r(x, y) = \beta \log \frac{\pi^{*}(y \mid x)}{\pi_{\mathrm{ref}}(y \mid x)} + \beta \log Z(x)
+$$
+
+**④ Bradley–Terry 식(04장)에는 보상의 차이만 들어간다** → 두 응답에 똑같이 붙은 $\beta \log Z(x)$ 가 **소거**된다.
+
+$$
+r(x, y_w) - r(x, y_l) = \beta \log \frac{\pi^{*}(y_w \mid x)}{\pi_{\mathrm{ref}}(y_w \mid x)} - \beta \log \frac{\pi^{*}(y_l \mid x)}{\pi_{\mathrm{ref}}(y_l \mid x)}
+$$
+
+이제 $\pi^{*}$ 자리에 학습할 정책 $\pi_\theta$ 를 넣고 Bradley–Terry 손실을 그대로 쓰면 **DPO 손실**이 됩니다.
+
+$$
+\mathcal{L}_{\mathrm{DPO}}(\theta) = -\,\mathbb{E}_{(x,\, y_w,\, y_l)} \left[ \log \sigma\!\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\mathrm{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\mathrm{ref}}(y_l \mid x)} \right) \right]
+$$
+
+즉 **언어 모델 자체가 암묵적 보상 모델**이 됩니다 ("Your Language Model is Secretly a Reward Model"). 응답 $y$ 의 암묵적 보상은
+
+$$
+\hat{r}_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\mathrm{ref}}(y \mid x)} = \beta \Big( \log \pi_\theta(y \mid x) - \log \pi_{\mathrm{ref}}(y \mid x) \Big)
+$$
+
 학습 시 필요한 것: 정책, 참조 정책, 선호 쌍. 샘플링도 critic 도 보상 모델도 없습니다.
+
+| 수식 | 코드 (`dpo.py`) |
+|---|---|
+| $\log \pi_\theta(y \mid x)$ (응답 토큰 log-prob 의 합) | `sequence_logprob(policy, ...)` → `pi` |
+| $\log \pi_{\mathrm{ref}}(y \mid x)$ | `sequence_logprob(ref, ...)` → `rf` |
+| $\hat{r}_\theta(x, y_w) - \hat{r}_\theta(x, y_l)$ | `beta * ((pi_c - ref_c) - (pi_r - ref_r))` |
+| $\mathcal{L}_{\mathrm{DPO}}$ | `-F.logsigmoid(logits).mean()` |
+
+### 기울기가 말해 주는 것
+
+$m = \hat{r}_\theta(x, y_w) - \hat{r}_\theta(x, y_l)$ 라 두면, 손실의 기울기는
+
+$$
+\nabla_\theta \mathcal{L}_{\mathrm{DPO}} = -\,\beta \; \sigma(-m) \; \Big[ \nabla_\theta \log \pi_\theta(y_w \mid x) - \nabla_\theta \log \pi_\theta(y_l \mid x) \Big]
+$$
+
+- 괄호 안: chosen 의 확률은 올리고 rejected 의 확률은 내리는 방향.
+- 가중치 $\sigma(-m)$: 이미 잘 구분하는 쌍($m \gg 0$)은 거의 0 → **틀리고 있는 쌍에 집중**한다.
 
 ## 2. 로그 읽기
 
 | 지표 | 의미 |
 |---|---|
-| `reward_acc` | 암묵적 보상 β·log(π/π_ref) 이 chosen 을 더 높게 평가하는 비율 |
-| `margin` | 암묵적 보상 차이의 평균 |
-| `chosen_logp` / `rejected_logp` | 선택/거절 응답의 log π_θ(y∣x) |
+| `reward_acc` | 암묵적 보상 $\hat{r}_\theta$ 가 chosen 을 더 높게 평가하는 쌍의 비율 |
+| `margin` | 암묵적 보상 차이 $m$ 의 평균 |
+| `chosen_logp` / `rejected_logp` | 선택/거절 응답의 $\log \pi_\theta(y \mid x)$ |
 
-초기에는 π_θ = π_ref 이므로 손실이 정확히 log 2 ≈ 0.693 입니다 (`test_dpo_loss_at_init_is_log2`).
+초기에는 $\pi_\theta = \pi_{\mathrm{ref}}$ 라서 $m = 0$, 손실이 정확히 $-\log \sigma(0) = \log 2 \approx 0.693$ 입니다 (`test_dpo_loss_at_init_is_log2`).
 
 ## 실습
 

@@ -28,7 +28,7 @@ LESSONS = [
              "title": "SFT 손실 = 다음 토큰 교차 엔트로피",
              "body": "RL 이전 단계는 평범한 언어 모델 학습입니다. `logits[:, :-1]` 이 `ids[:, 1:]` 을 예측하도록 "
                      "교차 엔트로피를 계산하고, 패딩 위치(`mask=0`)는 손실에서 뺍니다.\n\n"
-                     "이렇게 만든 SFT 모델이 **RL 의 출발점(π_θ 초기값)** 이자 **KL 제약의 기준(π_ref)** 이 됩니다."},
+                     "이렇게 만든 SFT 모델이 **RL 의 출발점($\\pi_\\theta$ 의 초기값)** 이자 **KL 제약의 기준($\\pi_{\\mathrm{ref}}$)** 이 됩니다."},
             {"file": "nlprl/pretrain.py", "start": "    for step in range(1, steps + 1):", "end": "        sched.step()",
              "title": "학습 루프",
              "body": "과제의 `corpus()` 에서 문장을 뽑아 `BOS + 문장 + EOS` 로 인코딩하고 오른쪽 패딩합니다. "
@@ -36,7 +36,7 @@ LESSONS = [
             {"file": "nlprl/algorithms/common.py", "start": "def make_reference(", "end": "    return ref",
              "title": "참조 정책 π_ref 만들기",
              "body": "RL 을 시작할 때 정책을 **깊은 복사해서 얼려 둡니다** (`requires_grad_(False)`). "
-                     "이후 모든 알고리즘은 `log π_θ − log π_ref` 로 '처음에서 얼마나 멀어졌는지'를 측정합니다."},
+                     "이후 모든 알고리즘은 $\\log \\pi_\\theta - \\log \\pi_{\\mathrm{ref}}$ 로 '처음에서 얼마나 멀어졌는지'를 측정합니다."},
             {"file": "nlprl/pipeline.py", "start": "DEFAULTS = {", "end": "^}",
              "title": "과제별 기본 하이퍼파라미터",
              "body": "CLI 와 웹 실험실이 같은 기본값을 씁니다. `sentiment` 는 reward hacking 을 막기 위해 "
@@ -93,15 +93,15 @@ LESSONS = [
              "end": "            total_reward = score - cfg.kl_coef * kl",
              "title": "② KL 벌점을 보상에 섞기",
              "body": "`logp` 는 기울기가 필요하므로 `no_grad` 밖에서 계산합니다. 샘플 y 가 π_θ 에서 나왔으므로 "
-                     "`Σ_t (log π_θ − log π_ref)` 의 기댓값이 정확히 KL(π_θ‖π_ref) 입니다. "
-                     "최종 보상은 `R − β·KL`."},
+                     "$\\sum_t (\\log \\pi_\\theta - \\log \\pi_{\\mathrm{ref}})$ 의 기댓값이 정확히 $\\mathrm{KL}(\\pi_\\theta \\Vert \\pi_{\\mathrm{ref}})$ 입니다. "
+                     "최종 보상은 $R' = R - \\beta \\cdot \\widehat{\\mathrm{KL}}$."},
             {"file": "nlprl/algorithms/reinforce.py", "start": "            if baseline == \"batch_mean\":", "end": "            adv = total_reward - b",
              "title": "③ baseline 으로 분산 줄이기",
-             "body": "상수 b 를 빼도 기울기의 기댓값은 그대로입니다 (`E[∇log π] = 0`). 하지만 분산이 크게 줄어듭니다. "
+             "body": "상수 $b$ 를 빼도 기울기의 기댓값은 그대로입니다 ($\\mathbb{E}[\\nabla_\\theta \\log \\pi_\\theta] = 0$). 하지만 분산이 크게 줄어듭니다. "
                      "`batch_mean` 은 GRPO·RLOO 의 원형입니다. 시각화 탭의 시뮬레이터에서 baseline 을 켜고 꺼 보세요."},
             {"file": "nlprl/algorithms/reinforce.py", "start": "        seq_logp = (logp * amask).sum(-1)", "end": "        opt.step()",
              "title": "④ 정책 경사 = 보상 가중 최대우도",
-             "body": "`loss = −(A · log π_θ(y|x)).mean()`. A>0 이면 그 응답의 확률을 올리고, A<0 이면 내립니다. "
+             "body": "$\\text{loss} = -\\frac{1}{B}\\sum_i A_i \\log \\pi_\\theta(y_i \\mid x_i)$. $A > 0$ 이면 그 응답의 확률을 올리고, $A < 0$ 이면 내립니다. "
                      "이 한 줄이 REINFORCE 의 전부입니다."},
         ],
     },
@@ -115,30 +115,30 @@ LESSONS = [
         "walkthrough": [
             {"file": "nlprl/algorithms/ppo.py", "start": "class PPOConfig(RLConfig):", "end": "    whiten_advantages: bool = True",
              "title": "PPO 의 하이퍼파라미터",
-             "body": "`ppo_epochs` 번 같은 롤아웃을 재사용하고, `clip_range`(ε) 로 한 번에 움직일 수 있는 폭을 제한합니다. "
-                     "LLM 에서는 보통 γ=1, λ=0.95."},
+             "body": "`ppo_epochs` 번 같은 롤아웃을 재사용하고, `clip_range`($\\epsilon$) 로 한 번에 움직일 수 있는 폭을 제한합니다. "
+                     "LLM 에서는 보통 $\\gamma = 1,\\ \\lambda = 0.95$."},
             {"file": "nlprl/model.py", "start": "        self.value_head = nn.Linear(cfg.n_embd, 1) if with_value_head else None",
              "title": "critic = value head",
-             "body": "정책과 같은 Transformer 몸통 위에 `Linear(d, 1)` 을 얹어 **각 위치의 상태 가치 V(s_t)** 를 예측합니다. "
+             "body": "정책과 같은 Transformer 몸통 위에 `Linear(d, 1)` 을 얹어 **각 위치의 상태 가치 $V(s_t)$** 를 예측합니다. "
                      "대형 모델에서는 critic 을 별도 모델로 두는 경우가 많습니다."},
             {"file": "nlprl/algorithms/ppo.py", "start": "            old_logp, old_values = token_logprobs(policy, ids, attn, return_values=True)",
              "end": "            rewards[torch.arange(len(last)), last] += score",
              "title": "토큰 단위 보상 만들기",
-             "body": "**모든 응답 토큰**에 `−β·(log π_old − log π_ref)` 를, **마지막 토큰**에만 점수 R 을 더합니다. "
+             "body": "**모든 응답 토큰**에 $-\\beta(\\log \\pi_{\\mathrm{old}} - \\log \\pi_{\\mathrm{ref}})$ 를, **마지막 토큰**에만 점수 $R$ 을 더합니다. "
                      "그래서 critic 은 '앞으로 받을 점수 − 앞으로 받을 KL 벌점'을 배우게 됩니다."},
             {"file": "nlprl/algorithms/ppo.py", "start": "def compute_gae(", "end": "    return adv, returns",
              "title": "GAE: 토큰별 advantage",
-             "body": "뒤에서부터 `δ_t = r_t + γV(s_{t+1}) − V(s_t)`, `A_t = δ_t + γλA_{t+1}` 을 계산합니다. "
-                     "응답이 끝난 뒤(mask=0)의 가치는 0 으로 둡니다. 시각화 탭에서 γ, λ 를 바꿔 보세요."},
+             "body": "뒤에서부터 $\\delta_t = r_t + \\gamma V(s_{t+1}) - V(s_t)$, $A_t = \\delta_t + \\gamma\\lambda A_{t+1}$ 을 계산합니다. "
+                     "응답이 끝난 뒤(mask=0)의 가치는 0 으로 둡니다. 시각화 탭에서 $\\gamma$, $\\lambda$ 를 바꿔 보세요."},
             {"file": "nlprl/algorithms/ppo.py", "start": "                # --- clipped surrogate objective ---",
              "end": "                pg_loss = masked_mean(torch.max(pg1, pg2), m)",
              "title": "clipped surrogate objective",
-             "body": "`ρ = exp(logp − old_logp)`. 손실은 `max(−Aρ, −A·clip(ρ))` 로, **이득이 생기는 방향으로만** clip 이 걸립니다. "
-                     "시각화 탭의 그래프에서 A>0 / A<0 일 때 평평해지는 구간을 확인하세요."},
+             "body": "$\\rho = \\exp(\\log \\pi_\\theta - \\log \\pi_{\\mathrm{old}})$. 손실은 $\\max(-\\rho A,\\ -\\mathrm{clip}(\\rho) A)$ 로, **이득이 생기는 방향으로만** clip 이 걸립니다. "
+                     "시각화 탭의 그래프에서 $A > 0$ / $A < 0$ 일 때 평평해지는 구간을 확인하세요."},
             {"file": "nlprl/algorithms/ppo.py", "start": "                # --- clipped value loss ---",
              "end": "                loss = pg_loss + cfg.vf_coef * vf_loss",
              "title": "value loss (역시 clip)",
-             "body": "critic 은 GAE 로 만든 `returns` 를 회귀합니다. 값도 `old_values ± ε` 범위로 clip 해 급격한 변화를 막습니다."},
+             "body": "critic 은 GAE 로 만든 `returns` 를 회귀합니다. 값도 $V_{\\mathrm{old}} \\pm \\epsilon$ 범위로 clip 해 급격한 변화를 막습니다."},
             {"file": "nlprl/algorithms/ppo.py", "start": "                    stats[\"clipfrac\"]",
              "end": "                    stats[\"approx_kl\"]",
              "title": "감시 지표: clipfrac, approx_kl",
@@ -167,7 +167,7 @@ LESSONS = [
             {"file": "nlprl/preference.py", "start": "    def batch_loss(batch):",
              "end": "        return -F.logsigmoid(rc - rr).mean(), (rc > rr).float().mean()",
              "title": "Bradley–Terry 손실",
-             "body": "`−log σ(r(x,y_w) − r(x,y_l))`. 점수의 **차이** 만 학습하므로 보상 모델 점수의 절대값(오프셋)은 의미가 없습니다."},
+             "body": "$-\\log \\sigma\\big(r(x, y_w) - r(x, y_l)\\big)$. 점수의 **차이** 만 학습하므로 보상 모델 점수의 절대값(오프셋)은 의미가 없습니다."},
             {"file": "nlprl/algorithms/common.py", "start": "def reward_model_fn(", "end": "    return fn",
              "title": "RM 점수를 RL 보상으로",
              "body": "롤아웃의 `input_ids` 를 그대로 보상 모델에 넣습니다. 이 함수를 `--reward rm` 으로 PPO 에 꽂으면 RLHF 가 완성됩니다."},
@@ -192,8 +192,8 @@ LESSONS = [
              "body": "응답 토큰들의 log-prob 합. 정책과 참조 정책 각각에 대해 계산합니다."},
             {"file": "nlprl/algorithms/dpo.py", "start": "def dpo_loss(", "end": "    return loss, chosen_reward, rejected_reward",
              "title": "DPO 손실",
-             "body": "암묵적 보상 `β·log(π_θ/π_ref)` 의 차이를 Bradley–Terry 에 넣은 것. 처음엔 π_θ=π_ref 라 손실이 정확히 log 2 입니다. "
-                     "시각화 탭에서 β 에 따른 손실과 기울기 가중치 σ(−margin) 를 보세요."},
+             "body": "암묵적 보상 $\\beta \\log \\frac{\\pi_\\theta}{\\pi_{\\mathrm{ref}}}$ 의 차이를 Bradley–Terry 에 넣은 것. 처음엔 $\\pi_\\theta = \\pi_{\\mathrm{ref}}$ 라 손실이 정확히 $\\log 2$ 입니다. "
+                     "시각화 탭에서 β 에 따른 손실과 기울기 가중치 $\\sigma(-m)$ 를 보세요."},
             {"file": "nlprl/algorithms/dpo.py", "start": "            ids, mask, rmask = encode_pairs(tok, batch)",
              "end": "            loss, rc, rr = dpo_loss(pi[:n], pi[n:], rf[:n], rf[n:], cfg.beta)",
              "title": "학습 루프",
@@ -214,7 +214,7 @@ LESSONS = [
              "body": "정답이면 1, 아니면 0. 보상 모델이 없으니 과최적화도 없습니다. 수학·코드 추론 모델 학습의 기본 형태입니다."},
             {"file": "nlprl/algorithms/grpo.py", "start": "class GRPOConfig(RLConfig):", "end": "    loss_type: str",
              "title": "GRPO 설정과 변형",
-             "body": "`group_size`(G) 가 핵심입니다. `scale_rewards=False` 는 Dr. GRPO, `loss_type=\"token\"` 은 DAPO 의 제안입니다."},
+             "body": "`group_size`($G$) 가 핵심입니다. `scale_rewards=False` 는 Dr. GRPO, `loss_type=\"token\"` 은 DAPO 의 제안입니다."},
             {"file": "nlprl/algorithms/grpo.py", "start": "def group_advantages(", "end": "    return adv.view(-1)",
              "title": "그룹 상대 advantage",
              "body": "`[B] → [B/G, G]` 로 바꿔 그룹 평균을 빼고 표준편차로 나눕니다. critic 이 할 일을 그룹 통계가 대신합니다. "
@@ -227,7 +227,7 @@ LESSONS = [
              "end": "            kl = torch.exp(log_r) - log_r - 1  # k3",
              "title": "clip 목적 + k3 KL",
              "body": "PPO 와 같은 clip 목적에, KL 은 보상이 아니라 **손실에 직접** 더합니다. k3 추정치 "
-                     "`e^x − x − 1` (x = log π_ref − log π_θ) 은 항상 0 이상이고 분산이 작습니다."},
+                     "$e^{u} - u - 1$ ($u = \\log \\pi_{\\mathrm{ref}} - \\log \\pi_\\theta$) 은 항상 0 이상이고 분산이 작습니다."},
             {"file": "nlprl/algorithms/grpo.py", "start": "            per_token = -(surr - cfg.kl_coef * kl)",
              "end": "                loss = masked_mean(per_token, amask)",
              "title": "손실 집계 방식",
@@ -241,6 +241,15 @@ LESSONS = [
         "title": "더 나아가기",
         "subtitle": "실제 LLM 규모로 확장할 때 바뀌는 것과 읽을거리",
         "doc": "docs/07_next_steps.md",
+        "widgets": [],
+        "walkthrough": [],
+    },
+    {
+        "id": "notation",
+        "num": "부록",
+        "title": "기호와 수식 읽는 법",
+        "subtitle": "문서에 나오는 모든 기호의 읽는 법, 뜻, 대응하는 코드 변수",
+        "doc": "docs/appendix_notation.md",
         "widgets": [],
         "walkthrough": [],
     },
