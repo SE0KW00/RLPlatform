@@ -47,10 +47,11 @@ def load_reward_model(path: str | Path) -> RewardModel:
 class Logger:
     """콘솔 출력 + history.json 저장."""
 
-    def __init__(self, out_dir: str | Path | None = None, quiet: bool = False):
+    def __init__(self, out_dir: str | Path | None = None, quiet: bool = False, on_log=None):
         self.history: list[dict] = []
         self.out_dir = Path(out_dir) if out_dir else None
         self.quiet = quiet
+        self.on_log = on_log  # 콜백(row, samples): 웹 앱이 실시간 스트리밍/중단에 사용
         self.t0 = time.time()
 
     def log(self, step: int, metrics: dict, samples: list[str] | None = None):
@@ -62,8 +63,11 @@ class Logger:
             for s in samples or []:
                 print(f"      └ {s!r}")
         self.save()
+        if self.on_log:
+            self.on_log(row, samples or [])
 
     def save(self):
         if self.out_dir:
+            self.out_dir = Path(self.out_dir)
             self.out_dir.mkdir(parents=True, exist_ok=True)
             (self.out_dir / "history.json").write_text(json.dumps(self.history, indent=1))

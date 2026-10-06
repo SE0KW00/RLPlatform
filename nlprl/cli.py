@@ -8,6 +8,7 @@
     python -m nlprl train    --task arithmetic --algo grpo
     python -m nlprl sample   --ckpt runs/sentiment/ppo/policy.pt
     python -m nlprl plot     runs/sentiment/*/history.json --metric eval/reward
+    python -m nlprl serve    # 웹 학습 플랫폼 → http://127.0.0.1:8000
 """
 
 from __future__ import annotations
@@ -16,120 +17,37 @@ import argparse
 import json
 from pathlib import Path
 
-from .algorithms import (DPOConfig, GRPOConfig, PPOConfig, RLConfig, evaluate, reward_model_fn,
-                         train_dpo, train_grpo, train_ppo, train_reinforce)
 from .generation import generate
-from .preference import make_preference_pairs, train_reward_model
-from .pretrain import pretrain
+from .pipeline import run_dpo, run_pretrain, run_reward_model, run_train
 from .tasks import TASKS, get_task
 from .tokenizer import CharTokenizer
-from .utils import Logger, load_policy, load_reward_model, save_checkpoint, set_seed
-
-# 과제별로 잘 동작하는 기본값 (CPU 로 수 분 이내)
-DEFAULTS = {
-    "sentiment": {
-        "pretrain_steps": 1500,
-        "reinforce": dict(steps=150, lr=1e-4, kl_coef=0.3),
-        "ppo": dict(steps=100, lr=1e-4, kl_coef=0.3),
-        "grpo": dict(steps=150, lr=1e-4, kl_coef=0.3),
-    },
-    "arithmetic": {
-        "pretrain_steps": 2500,
-        "reinforce": dict(steps=150, lr=1e-4, kl_coef=0.0),
-        "ppo": dict(steps=100, lr=1e-4, kl_coef=0.0),
-        "grpo": dict(steps=200, lr=1e-4, kl_coef=0.0),
-    },
-}
-
-
-def run_dir(task: str, name: str) -> Path:
-    return Path("runs") / task / name
-
-
-def sft_path(task: str) -> Path:
-    return run_dir(task, "sft") / "policy.pt"
+from .utils import load_policy, set_seed
 
 
 def cmd_pretrain(a):
-    rng = set_seed(a.seed)
-    task, tok = get_task(a.task), CharTokenizer()
-    out = run_dir(a.task, "sft")
-    steps = a.steps or DEFAULTS[a.task]["pretrain_steps"]
-    model = pretrain(task, tok, rng, steps=steps, logger=Logger(out))
-    save_checkpoint(out / "policy.pt", model, a.task)
-    print(f"saved → {out / 'policy.pt'}")
+    path = run_pretrain(a.task, a.seed, a.steps)
+    print(f"saved → {path}")
 
 
 def cmd_train(a):
-    rng = set_seed(a.seed)
-    task, tok = get_task(a.task), CharTokenizer()
-    init = a.init or sft_path(a.task)
-    policy, _ = load_policy(init, with_value_head=(a.algo == "ppo"))
-
-    params = dict(DEFAULTS[a.task][a.algo])
-    for k in ("steps", "lr", "kl_coef", "batch_size", "temperature"):
-        if getattr(a, k) is not None:
-            params[k] = getattr(a, k)
-
-    reward_fn = None
-    if a.reward == "rm":
-        rm_path = a.rm or (run_dir(a.task, "rm") / "rm.pt")
-        reward_fn = reward_model_fn(load_reward_model(rm_path))
-
-    name = a.name or (a.algo + ("_rm" if a.reward == "rm" else ""))
-    out = run_dir(a.task, name)
-    logger = Logger(out)
-    print(f"== {a.algo} on {a.task} | init={init} | reward={a.reward} | {params}")
-    ev, samples = evaluate(policy, tok, task, rng)
-    logger.log(0, ev, samples)
-
-    if a.algo == "reinforce":
-        train_reinforce(policy, tok, task, RLConfig(**params), rng, reward_fn, baseline=a.baseline, logger=logger)
-    elif a.algo == "ppo":
-        train_ppo(policy, tok, task, PPOConfig(**params), rng, reward_fn, logger=logger)
-    elif a.algo == "grpo":
-        if a.group_size:
-            params["group_size"] = a.group_size
-        train_grpo(policy, tok, task, GRPOConfig(**params), rng, reward_fn, logger=logger)
-    save_checkpoint(out / "policy.pt", policy, a.task, {"algo": a.algo, **params})
-    print(f"saved → {out / 'policy.pt'}")
+    params = {k: getattr(a, k) for k in ("steps", "lr", "kl_coef", "batch_size", "temperature", "group_size")}
+    if a.algo != "grpo":
+        params.pop("group_size")
+    print(f"== {a.algo} on {a.task} | reward={a.reward} | overrides={ {k: v for k, v in params.items() if v is not None} }")
+    path = run_train(a.task, a.algo, a.seed, init=a.init, reward=a.reward, rm=a.rm, name=a.name,
+                     baseline=a.baseline, **params)
+    print(f"saved → {path}")
 
 
 def cmd_reward_model(a):
-    rng = set_seed(a.seed)
-    task, tok = get_task(a.task), CharTokenizer()
-    policy, _ = load_policy(a.init or sft_path(a.task))
-    print(f"선호 쌍 {a.pairs}개 생성 중 (label_noise={a.label_noise}) ...")
-    pairs = make_preference_pairs(policy, tok, task, rng, a.pairs, label_noise=a.label_noise)
-    out = run_dir(a.task, "rm")
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "pairs.jsonl").write_text("\n".join(json.dumps(p.__dict__) for p in pairs))
-    for p in pairs[:3]:
-        print(f"  {p.prompt!r}: chosen={p.chosen!r}  rejected={p.rejected!r}")
-    rm = train_reward_model(policy, tok, pairs, rng, epochs=a.epochs, logger=Logger(out))
-    save_checkpoint(out / "rm.pt", rm, a.task)
-    print(f"saved → {out / 'rm.pt'}")
+    print(f"선호 쌍 {a.pairs}개 생성 + 보상 모델 학습 (label_noise={a.label_noise}) ...")
+    path = run_reward_model(a.task, a.seed, a.init, a.pairs, a.label_noise, a.epochs)
+    print(f"saved → {path}")
 
 
 def cmd_dpo(a):
-    rng = set_seed(a.seed)
-    task, tok = get_task(a.task), CharTokenizer()
-    policy, _ = load_policy(a.init or sft_path(a.task))
-    pairs_file = run_dir(a.task, "rm") / "pairs.jsonl"
-    if pairs_file.exists() and not a.regen_pairs:
-        from .preference import PreferencePair
-        pairs = [PreferencePair(**json.loads(l)) for l in pairs_file.read_text().splitlines()]
-        print(f"{pairs_file} 에서 선호 쌍 {len(pairs)}개를 불러왔습니다")
-    else:
-        pairs = make_preference_pairs(policy, tok, task, rng, a.pairs, label_noise=a.label_noise)
-    out = run_dir(a.task, a.name or "dpo")
-    logger = Logger(out)
-    ev, samples = evaluate(policy, tok, task, rng)
-    logger.log(0, ev, samples)
-    cfg = DPOConfig(epochs=a.epochs, beta=a.beta, lr=a.lr)
-    train_dpo(policy, tok, task, pairs, cfg, rng, logger=logger)
-    save_checkpoint(out / "policy.pt", policy, a.task, {"algo": "dpo", "beta": a.beta})
-    print(f"saved → {out / 'policy.pt'}")
+    path = run_dpo(a.task, a.seed, a.init, a.pairs, a.regen_pairs, a.label_noise, a.epochs, a.beta, a.lr, a.name)
+    print(f"saved → {path}")
 
 
 def cmd_sample(a):
@@ -165,6 +83,11 @@ def cmd_plot(a):
     fig.tight_layout()
     fig.savefig(a.out, dpi=120)
     print(f"saved → {a.out}")
+
+
+def cmd_serve(a):
+    from .web.server import serve
+    serve(a.host, a.port, open_browser=a.open)
 
 
 def main(argv=None):
@@ -230,6 +153,12 @@ def main(argv=None):
     sp.add_argument("--metric", default="eval/reward")
     sp.add_argument("--out", default="plot.png")
     sp.set_defaults(fn=cmd_plot)
+
+    sp = sub.add_parser("serve", help="웹 학습 플랫폼 실행 (레슨·시각화·실험실)")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8000)
+    sp.add_argument("--open", action="store_true", help="브라우저 자동 열기")
+    sp.set_defaults(fn=cmd_serve)
 
     a = p.parse_args(argv)
     a.fn(a)

@@ -42,7 +42,10 @@ def make_preference_pairs(
     label_noise: float = 0.0,
 ) -> list[PreferencePair]:
     pairs: list[PreferencePair] = []
-    while len(pairs) < n_pairs:
+    max_rounds = max(50, 4 * n_pairs // 64)
+    for _ in range(max_rounds):
+        if len(pairs) >= n_pairs:
+            break
         uniq = task.sample_prompts(64, rng)
         prompts = [p for p in uniq for _ in range(samples_per_prompt)]
         roll = generate(policy, tok, prompts, task.max_new_tokens)
@@ -57,6 +60,10 @@ def make_preference_pairs(
             if rng.random() < label_noise:
                 c, r = r, c
             pairs.append(PreferencePair(uniq[g], c, r))
+    if len(pairs) < n_pairs:
+        raise RuntimeError(
+            f"선호 쌍을 {n_pairs}개 만들지 못했습니다({len(pairs)}개). 정책의 응답 보상이 거의 같습니다 — SFT 를 더 학습하세요."
+        )
     return pairs[:n_pairs]
 
 
